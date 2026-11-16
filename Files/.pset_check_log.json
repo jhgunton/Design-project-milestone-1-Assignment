@@ -1,0 +1,13 @@
+{
+  "2.1": {
+    "milestone1_blood_balances": true,
+    "milestone1_cellular_balances": true,
+    "milestone1_growth": true
+  },
+  "2.2": {
+    "milestone1_killing": true
+  },
+  "2.3": {
+    "milestone1_payload_auc": true
+  }
+}

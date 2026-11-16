@@ -1,0 +1,10 @@
+{
+  "version": "0.1.0a10",
+  "files": {
+    "PROVENANCE.json": "e0e0bc878bf40b2d2d4081155fb9aa748fe43cdff7145966d55632ca81398171",
+    "__init__.py": "1053eb483094cb5cee388dca3c43641cd10ba79144e0d73dfbcfcd218a300edc",
+    "documentation.html": "598c853d0f7c95498d4bb786b4f8df8a583257a1164c3a50ca286cba2eafe14e",
+    "documentation.pdf": "8329ffb77eccec74ace8e5dcebb3af5c46b1391f41c4c74d85f6a68eeed1d5b0",
+    "modeling.py": "5320491432bcc4647d7686d252add27a395ffb6706adb2573b29447f8cd1dcc0"
+  }
+}

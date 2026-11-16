@@ -1,0 +1,35 @@
+{
+  "payload": {
+    "format_version": 2,
+    "assignment_id": "design_project_milestone_1",
+    "student_email": "jhgunton@mit.edu",
+    "results": [
+      {
+        "name": "milestone1_blood_balances",
+        "display": "2.1",
+        "passed": true
+      },
+      {
+        "name": "milestone1_cellular_balances",
+        "display": "2.1",
+        "passed": true
+      },
+      {
+        "name": "milestone1_growth",
+        "display": "2.1",
+        "passed": true
+      },
+      {
+        "name": "milestone1_killing",
+        "display": "2.2",
+        "passed": true
+      },
+      {
+        "name": "milestone1_payload_auc",
+        "display": "2.3",
+        "passed": true
+      }
+    ]
+  },
+  "signature": "3eecfa78c41d448854cfef2f78ac3e62871273ad7fe63a38c273b9312796f371"
+}

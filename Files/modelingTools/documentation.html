@@ -1,0 +1,367 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MIT 20.320 modeling functions</title><style>*{box-sizing:border-box}body{font:16px/1.5 Arial,sans-serif;color:#202830;max-width:58rem;margin:auto;padding:2.8rem 2rem}
+h1,h2,h3{color:#162c3a;line-height:1.2}h1{font-size:2.2rem;margin:0 0 .5rem}h2{font-size:1.45rem;margin:1.6rem 0 .65rem}h3{font-size:1.1rem}
+p{margin:.65rem 0}a{color:#145c80}code,tt,pre{font-family:'DejaVu Sans Mono',monospace}code,tt{font-size:.88em}
+pre{background:#f3f6f8;border:1px solid #d9e1e6;padding:.8rem 1rem;white-space:pre-wrap;overflow-wrap:anywhere;font-size:.84rem;line-height:1.4;break-inside:avoid}
+table{width:100%;border-collapse:collapse;font-size:.9rem;margin:.8rem 0 1.1rem;table-layout:fixed}th,td{border:1px solid #d9d9d9;padding:.5rem .6rem;text-align:left;vertical-align:top;overflow-wrap:anywhere}
+th{background:#dfeaf0;color:#142f40}th:first-child,td:first-child{width:43%}thead{display:table-header-group}tr{break-inside:avoid}
+nav{padding:.7rem 0}nav a{display:inline-block;margin:.2rem 1rem .2rem 0}.eyebrow{font-size:.85rem;color:#55626c}
+@page{size:letter;margin:.65in .65in .7in;@bottom-left{content:'MIT 20.320 | Modeling functions';font:8pt Arial;color:#52636d}@bottom-right{content:counter(page)' / 'counter(pages);font:8pt Arial;color:#52636d}}
+@media print{body{max-width:none;padding:0;font-size:10pt;line-height:1.35}h1{font-size:24pt}h2{font-size:15pt}h3{font-size:11pt}h1,h2,h3{break-after:avoid}p{orphans:3;widows:3}pre{font-size:7.6pt;line-height:1.35;padding:7pt 9pt}table{font-size:8.4pt}th,td{padding:5pt 6pt}nav{font-size:8.5pt}.format-link{display:none}.assignment-section{break-before:page;font-size:9pt;line-height:1.25}.assignment-section p{margin:.4rem 0}.assignment-section pre{font-size:7pt}}
+@media(max-width:600px){body{padding:1.2rem}table{font-size:.8rem}pre{font-size:.75rem}}</style></head><body><header><p class="eyebrow">Analysis of Biomolecular and Cellular Systems</p><h1>MIT 20.320 modeling functions</h1><p>A practical guide and reference for building, simulating, and checking reaction-network models.</p><p class="format-link"><a href="documentation.pdf">Download the PDF</a></p></header><nav><a href="#workflow">Workflow</a><a href="#units">Units</a><a href="#parameters">Parameters</a><a href="#reactions">Reactions</a><a href="#state">State and reporting</a><a href="#growth">Growth and death</a><a href="#compile">Inspection</a><a href="#simulation">Dosing</a><a href="#results">Results</a><a href="#troubleshooting">Troubleshooting</a></nav><main><section id="workflow"><h2>1 Build and run a model</h2><p>The library turns a declared reaction network into differential equations,
+checks declared units, integrates the equations with exact dose events, and returns
+time courses for plotting and analysis. You still choose the biological assumptions,
+stoichiometry, numerical parameter values, and initial conditions. Start with a
+diagram, then declare compartments, species, reactions, and parameters.</p>
+<p>This complete toy model describes a cleared chemical in a 2 L compartment.
+It runs independently of the design project.</p><pre><code>import numpy as np
+from modelingTools import (
+    KineticModel, Compartment, Parameters, Reaction,
+    Simulation, Impulse, plot_simulations,
+)
+
+network = KineticModel()
+network.add_compartment(Compartment(&#x27;fluid&#x27;, volume=2.0))
+network.add_species(&#x27;B&#x27;, &#x27;Chemical in fluid&#x27;, &#x27;M&#x27;, &#x27;fluid&#x27;)
+network.add_reaction(Reaction(&#x27;Clearance&#x27;, &#x27;B&#x27;, {},
+                              forward_rate_constant=&#x27;k_loss&#x27;))
+parameters = Parameters()
+parameters.add(&#x27;k_loss&#x27;, np.log(2) / 60, &#x27;min^-1&#x27;, &#x27;60-minute half-life&#x27;)
+network.add_accumulator(&#x27;AUC_B&#x27;, lambda s, k: s.B, &#x27;M min&#x27;, &#x27;Exposure&#x27;)
+model = network.compile(parameters, time_units=&#x27;min&#x27;)
+
+result = Simulation(
+    &#x27;One dose&#x27;, np.linspace(0, 180, 361), model,
+    initial_values={&#x27;B&#x27;: 0.0},
+    impulses=[Impulse(0, &#x27;B&#x27;, 2e-9, &#x27;mol&#x27;)],
+).simulate()
+print(result[&#x27;B&#x27;][0])       # 1e-9 M: 2e-9 mol distributed in 2 L
+print(result[&#x27;AUC_B&#x27;][-1])  # integrated concentration in M min
+plot_simulations(result, variables=[&#x27;B&#x27;], time_units=&#x27;min&#x27;)</code></pre></section><section id="units"><h2>2 Units and compartments</h2><p>All volumes are in liters. Bulk species use molar concentration; replicated
+cell compartments use molecules per cell. Adding a counted compartment automatically
+creates its count state; do not declare that count with <code>add_species</code>.
+A dimer's value counts dimers; specify two monomers in
+the reaction when a dimer contains two receptor subunits.</p><table><thead><tr><th>Declaration</th><th>Meaning</th></tr></thead><tbody><tr><td>Compartment('blood', volume=5.0)</td><td>One bulk compartment with a fixed 5 L volume.</td></tr><tr><td>Compartment('cell', count_variable='N', count_units='cells', volume_per_unit=1e-12)</td><td>A replicated cell compartment; creates the count state N in cells, with 1e-12 L per cell.</td></tr><tr><td>add_species('B', 'Blood chemical', 'M', 'blood')</td><td>Molar concentration in blood.</td></tr><tr><td>add_species('R', 'Receptor', '#/cell', 'cell')</td><td>Receptor molecules per cell.</td></tr></tbody></table><p>Use <code>add_compartment(Compartment(...))</code> for both forms. Supply exactly one of <code>volume</code> and <code>count_variable</code>. A counted compartment owns its count state; <code>count_units</code> defaults to cells, and <code>count_description</code> supplies an optional count label. These count options are unavailable for fixed-volume compartments. Declare molecular species separately with their compartment names.</p>
+<p><code>volume_per_unit</code> is required when converting per-cell amounts to
+intracellular concentration. Do not use total tumor volume for that conversion.</p>
+<p>Choose a simulation time unit: <code>sec</code>, <code>min</code>, <code>hr</code>,
+or <code>day</code> (the parser also accepts their documented aliases).
+Unit checks identify inconsistent declared time units; they do not automatically
+convert a parameter value reported per second into a model running in minutes.</p>
+<p>The chemical count symbol <code>#</code> means molecules, not moles. With
+<code>AVOGADRO</code> in molecules/mol, an intracellular amount x in #/cell has
+concentration x/(AVOGADRO * cell_volume_L). Bulk amount is concentration * volume.</p></section><section id="parameters"><h2>3 Parameters and conversions</h2><pre><code>parameters = Parameters()
+parameters.add(&#x27;k_on&#x27;, 2e6, &#x27;M^-1 min^-1&#x27;, &#x27;Association&#x27;)
+parameters.add(&#x27;k_off&#x27;, 0.02, &#x27;min^-1&#x27;, &#x27;Dissociation&#x27;)
+print(parameters[&#x27;k_off&#x27;])       # numerical value
+print(parameters.k_off)          # same value
+print(parameters.units(&#x27;k_off&#x27;)) # declared units
+print(parameters.parameter(&#x27;k_off&#x27;))
+variant = parameters.with_changes(k_off=0.01)  # original is unchanged</code></pre><p><code>add(name, value, units, description='')</code> declares a new parameter;
+duplicate names raise an error. <code>with_changes(**changes)</code> changes values
+of existing parameters while retaining their units and descriptions. Build a new
+model with the changed table; changing a separate table does not change an existing
+model.</p><pre><code>from modelingTools import convert_rate_constant
+
+# First convert per second to per minute if needed.
+k_on_M = 1e5 * 60
+k_on_per_cell = convert_rate_constant(
+    k_on_M, &#x27;M^-1 min^-1&#x27;, &#x27;(#/cell)^-1 min^-1&#x27;, volume=5e-13
+)</code></pre><p><code>convert_rate_constant(value, from_units, to_units, volume)</code> converts
+between molar and per-cell forms using AVOGADRO * volume and prints its factor.
+For a reaction between two per-cell species, a molar association constant is divided
+by that factor. For mixed bulk/per-cell binding, k_on * [bulk] * [receptor] already
+has units #/cell/time, so keep k_on in M^-1/time. This helper does not convert time
+units: change seconds to minutes separately.</p>
+<p>Other utilities are <code>Unit(text)</code> (unit arithmetic and comparison),
+<code>unit_of_species(units)</code>, <code>time_unit_in(units_string)</code>, and
+<code>check_time_units(units, time_units, what)</code>. Use <code>1</code> for a
+dimensionless parameter. Typical strings include <code>M</code>, <code>#/cell</code>,
+<code>cells</code>, <code>min^-1</code>, <code>M^-1 min^-1</code>,
+<code>(#/cell)^-1 min^-1</code>, <code>mol</code>, and <code>M min</code>.</p></section><section id="reactions"><h2>4 Reactions and custom rates</h2><pre><code>network.add_reaction(Reaction(
+    &#x27;Dimerization&#x27;, &#x27;2 R&#x27;, &#x27;D&#x27;,
+    forward_rate_constant=&#x27;k_on&#x27;, reverse_rate_constant=&#x27;k_off&#x27;,
+))
+network.add_reaction(Reaction(&#x27;Synthesis&#x27;, {}, &#x27;R&#x27;,
+                              forward_rate_constant=&#x27;q_R&#x27;))
+network.add_reaction(Reaction(&#x27;Loss&#x27;, &#x27;R&#x27;, {},
+                              forward_rate_constant=&#x27;k_deg&#x27;))</code></pre><p><code>Reaction(name, reactants, products, forward_rate_constant=None,
+reverse_rate_constant=None, ...)</code> accepts reaction sides as strings or dictionaries,
+such as <code>'2 R'</code> or <code>{'R': 2}</code>. Use <code>{}</code> for an empty
+side. Stoichiometric coefficients are nonnegative integers. Reactions must use
+species already declared in the network. Adding a reaction, observable, or
+accumulator with the name of an existing one replaces it and prints a warning;
+rebuild the model afterward so it uses the new version.</p>
+<p>Mass action generates k times each reactant raised to its stoichiometric
+coefficient. Thus <code>2 R -&gt; D</code> uses k_on * R**2, consumes two R per event,
+and produces one D. A reversible reaction uses the product species for its reverse
+rate. There is no extra combinatorial factor of one half.</p>
+<p>For a non-mass-action rate, supply a smooth function, a displayed expression,
+and the units returned by the function:</p><pre><code>network.add_reaction(Reaction(
+    &#x27;Saturable removal&#x27;, &#x27;R&#x27;, {},
+    rate_function=lambda s, k: k.v_max * s.R / (k.K_R + s.R),
+    rate_expression=&#x27;v_max [R] / (K_R + [R])&#x27;,
+    rate_units=&#x27;#/cell/min&#x27;,
+))</code></pre><p>Here R and K_R have the same per-cell units, and v_max is #/cell/min.
+The library checks <code>rate_units</code> but cannot infer dimensions inside the
+Python function. For a custom reverse direction, use <code>reverse_rate_function</code>
+and <code>reverse_rate_expression</code>. Optional <code>rate_expression_latex</code>
+and <code>reverse_rate_expression_latex</code> improve mathematical display.</p>
+<p>The reference rate is #/cell/time if any participant is a per-cell species,
+M/time if all participants are bulk species, or cells/time for reactions on a count.
+The library multiplies by the cell count or donor bulk volume to conserve molecules
+when converting between compartments. A transfer between bulk compartments uses
+its first participant's compartment as the reference; write the donor first.</p>
+<p>For a smooth threshold, <code>smooth_step(x, threshold, width)</code> returns a
+logistic switch between zero and one. Avoid a discontinuous Python <code>if</code>
+inside a rate law. A direct contribution to one declared derivative can be added
+with <code>network.add_rate_term(species, function, expression, units, description='')</code>;
+it is a source or sink in moiety bookkeeping, not a separate reaction.</p></section><section id="state"><h2>5 State conversions observables and accumulators</h2><p>Custom rate functions receive <code>s</code>, a <code>State</code>, and <code>k</code>,
+a <code>Parameters</code> table. Both support dictionary and attribute access.</p><table><thead><tr><th>Operation</th><th>Result</th></tr></thead><tbody><tr><td><code>s.R</code> or <code>s['R']</code></td><td>The species value in its declared units.</td></tr><tr><td><code>s.molar('X')</code></td><td>Molar concentration; converts #/cell using one cell's volume.</td></tr><tr><td><code>s.per_cell('B', 'cell')</code></td><td>Equivalent molecules per cell from bulk concentration and one cell's volume; not total blood molecules divided by N.</td></tr><tr><td><code>s.count('cell')</code></td><td>The current count of the replicated compartment.</td></tr><tr><td><code>s.volume('blood')</code></td><td>The bulk volume in L. For a replicated compartment, this returns volume per unit.</td></tr><tr><td><code>s.observe('signal')</code></td><td>An observable evaluated on the current state.</td></tr></tbody></table><pre><code>network.add_observable(
+    &#x27;X_uM&#x27;, lambda s, k: s.molar(&#x27;X&#x27;) * 1e6,
+    &#x27;uM&#x27;, &#x27;Intracellular concentration in micromolar&#x27;,
+)
+network.add_accumulator(
+    &#x27;AUC_B&#x27;, lambda s, k: s.B, &#x27;M min&#x27;, &#x27;Blood exposure&#x27;,
+)
+network.add_accumulator(
+    &#x27;Q_loss&#x27;, lambda s, k: k.k_loss * s.B * 5.0,
+    &#x27;mol&#x27;, &#x27;Cumulative chemical loss from 5 L blood&#x27;,
+)</code></pre><p><code>add_observable(name, function, units, description='')</code> reports an
+algebraic quantity without adding a dynamical state. At reporting time its function
+may receive arrays, so use NumPy-compatible arithmetic. Return a scalar or one
+value per output time. Observable units are reporting metadata.</p>
+<p><code>add_accumulator(name, rate_function, units, description='')</code> adds a
+state whose derivative is the supplied function. Declare the integrated units:
+M min for a concentration-time integral, mol for an integrated mol/min flux.
+Accumulators default to zero and do not feed back unless your rate law explicitly
+uses one. Access both kinds through <code>result['name']</code>.</p></section><section id="growth"><h2>6 Cell growth and death</h2><pre><code>network.add_reaction(Reaction(&#x27;Growth&#x27;, &#x27;N&#x27;, &#x27;2 N&#x27;,
+                              forward_rate_constant=&#x27;mu&#x27;))
+network.add_reaction(Reaction(
+    &#x27;Death&#x27;, &#x27;N&#x27;, {},
+    rate_function=lambda s, k: s.observe(&#x27;delta&#x27;) * s.N,
+    rate_expression=&#x27;delta [N]&#x27;, rate_units=&#x27;cells/min&#x27;,
+))</code></pre><p>Keep growth and death as separate, irreversible reactions on the cell count.
+Dying cells take their associated molecular contents out of the living-cell
+population, so cell loss alone leaves per-cell amounts unchanged. Do not add
+another per-cell death sink, or mix a cell-count species and molecular species
+in the same reaction.</p>
+<p>Describe redistribution or release using explicit molecular source reactions.
+For example, with loss rate delta times N cells/min, a source reaction from
+empty reactants to X with rate delta times X molecules/cell/min keeps the
+population's total X constant by redistributing the lost cells' X among survivors.
+Release into blood instead needs a source for the corresponding blood species,
+converted to M/min using the cell count, Avogadro's number, and blood volume.</p>
+<p>In the design project, cell division leaves the average receptor and drug
+amounts per living cell unchanged. Use the function supplied beside the project
+notebook to build a model with this assumption:</p><pre><code>from design_project_helpers import build_model
+model = build_model(network, parameters, time_units=&#x27;min&#x27;)</code></pre><p><code>build_model(network, parameters, time_units='min')</code> turns the declared
+reactions and parameters into a model ready for simulation and equation inspection.
+It requires one exponential-growth reaction <code>N -&gt; 2 N</code> governed by
+<code>mu</code> per replicated compartment. It rejects
+custom or density-dependent growth and direct count-rate terms. Parameters retain
+their declared units. The returned model supports the reporting and simulation
+methods below.</p>
+<h3>Cell division and molecular balances</h3>
+<p>All species are integrated in their declared units: M, molecules per cell, or
+cells. The core library's <code>network.compile(...)</code> includes growth dilution
+in per-cell equations: dividing existing molecules among more cells decreases the
+mean amount per cell. The project's <code>build_model</code> omits this dilution,
+implementing the assumption that growth leaves per-cell amounts unchanged.
+Cell-loss reactions need no per-cell death loss.</p>
+<p>Maintaining per-cell amounts during growth implies a source of cell-associated
+molecules, including drug payload. Payload accounting therefore balances
+administered payload plus this implied source against the amounts remaining and
+removed. This approximation does not conserve administered drug alone. The helper
+supports the specified exponential growth law; another growth law needs a
+corresponding implementation.</p></section><section id="compile"><h2>7 Build and inspect</h2><pre><code># General library model; use build_model(...) for the design project.
+model = network.compile(parameters, time_units=&#x27;min&#x27;)
+print(network)
+print(parameters)
+model.print_rate_equations()
+print(model.rate_equation_text())
+print(model.stoichiometry_table())
+for moiety in model.moieties():
+    print(moiety.balance_text)</code></pre><p><code>network.compile(...)</code> builds a runnable model and validates declared
+species, compartments, parameter references,
+mass-action dimensions, custom reference-rate units, and time units. It does not
+prove that your chosen biological model is correct or that a custom function has
+the dimensions you intended. Inspect the equations against your diagram.</p>
+<p><code>model.species_names</code> and <code>model.accumulator_names</code> list their
+names. <code>model.species(name)</code> and <code>model.compartment(name)</code>
+return their declarations. <code>model.rate_equations()</code> returns structured
+display terms. <code>model.print_parameters()</code> prints the parameter table.</p>
+<p>A moiety is a weighted total that the internal reactions transfer without
+creating or destroying it. Each result gives <code>coefficients</code>,
+<code>total_text</code>, <code>changed_by</code>, <code>is_conserved</code>, and
+<code>balance_text</code>. In an open model, sources and sinks generally change
+the total. Stoichiometric moieties are useful checks, not an automatic numerical
+conservation test or proof that every species is physically defined correctly.</p><pre><code>derivative = model.derivative_function()
+rates_in_declared_units = derivative(0.0, {&#x27;N&#x27;: 1e9, &#x27;R&#x27;: 20000.0})</code></pre><p><code>derivative_function()</code> returns a callable taking time and a state
+dictionary. Omitted molecular species and accumulators default to zero; include
+positive counts for compartments with per-cell molecular species. Its returned dictionary gives each
+derivative in the species' declared units per simulation time.
+<code>model.rhs(t, state)</code> accepts and returns vectors in the same units,
+ordered by <code>model.state_names</code>. <code>model.initial_state(initial_values)</code>
+creates this vector, and <code>model.state(state)</code> wraps it for named access.
+<code>totals_from_declared</code> and <code>declared_from_totals</code> convert
+between declared values and population totals when needed for analysis.</p></section><section id="simulation"><h2>8 Simulations impulses and repeated doses</h2><pre><code>trial = Simulation(
+    condition_name=&#x27;My condition&#x27;,
+    t=np.linspace(0, 63 * 1440, 1001),
+    model=model,
+    initial_values={&#x27;N&#x27;: 1e9, &#x27;R&#x27;: 20000.0},
+    impulses=[],
+    method=&#x27;LSODA&#x27;, rtol=1e-8,
+)
+trial.print_initial_conditions()
+result = trial.simulate()</code></pre><p>The time grid must be strictly increasing with at least two values. It controls
+reported samples, not the solver's adaptive internal step size. Give every
+compartment with per-cell molecular species a positive initial count. Count-only
+populations, unlisted molecular species, and accumulators may start at zero.
+Parameters and counts must remain physically sensible
+over the simulation; the solver does not enforce nonnegativity.</p>
+<p><code>rtol</code> and <code>atol</code> are integration tolerances. The default
+method is LSODA. For reaction-network models, absolute tolerance uses each state
+variable's declared units. With <code>atol=None</code>, the defaults are 1e-20 M,
+1e-8 molecules/cell, and 1e-8 cells. A dictionary overrides selected states, for
+example <code>atol={'B': 1e-24, 'N': 1e-12}</code>; other states retain their
+defaults. A scalar applies to every species in its own units. Choose tolerances
+small enough to resolve the concentrations and counts relevant to your model.
+<code>accumulator_atol=1e-30</code> sets the default for accumulators in their
+integrated units; a named <code>atol</code> entry can override it.
+<code>result.atol_used</code> records the tolerance for each state variable.</p><pre><code>events = [Impulse(day * 1440, &#x27;B&#x27;, 2e-9, &#x27;mol&#x27;) for day in [0, 21, 42]]
+result = Simulation(&#x27;Three doses&#x27;, time_axis, model, initial_values,
+                    impulses=events).simulate()
+
+from modelingTools import Regimen
+course = Regimen(&#x27;B&#x27;, amount=2e-9, units=&#x27;mol&#x27;, interval=21*1440,
+                 start=0, number_of_impulses=3)
+events = course.impulses(last_time=63*1440)</code></pre><p>The current Milestone 1 protocol uses three equal doses on days 0, 21, and 42,
+with assessment on day 63. The notebook's dosing explorer runs the student's
+model and untreated initial values; its reset button restores this calendar.</p><p><code>Impulse(time, species, amount, units)</code> is an instantaneous additive
+change. For a molar species, supported input units are mol, molecules, or M;
+for a per-cell species, #/cell or molecules; and for a count, cells. An impulse
+does not change a parameter, reset a concentration, or represent a finite infusion.
+An amount in mol is divided by the destination bulk volume to give its M jump.</p>
+<p>A count-only impulse retains the compartment's molecular totals, so its per-cell
+amounts change in inverse proportion to the count. Add molecular cargo separately
+when adding cells with specified contents. A count impulse must leave compartments
+with per-cell species at positive counts; count-only populations may reach zero.</p>
+<p>Impulse times are inserted into the output grid exactly. A later event has a
+before and after state at the same time; an event at the initial time is applied
+before the first recorded state. <code>Regimen</code> represents repeated impulses;
+its optional <code>end</code> is exclusive, and <code>number_of_impulses</code> caps
+the count. Pass either an expanded list or a Regimen directly in the impulses list.
+Use the model's time units for every event and interval.</p></section><section id="results"><h2>9 Results plots and parameter comparisons</h2><pre><code>days = result.in_days()
+final_count = result[&#x27;N&#x27;][-1]
+peak_B = result[&#x27;B&#x27;].max()
+auc_B = result[&#x27;AUC_B&#x27;][-1]
+print(result.impulse_times)
+print(result.names())
+
+plot_simulations(
+    [first_result, second_result], variables=[&#x27;B&#x27;, &#x27;N&#x27;],
+    time_units=&#x27;day&#x27;, columns=2, figsize=(10, 4),
+    overall_title=&#x27;Compare conditions&#x27;, log_scale=False,
+)</code></pre><p><code>result['name']</code> returns a NumPy time series for a species,
+observable, or accumulator. <code>result.t</code> is time in simulation units;
+<code>time_in('day')</code>, <code>in_days()</code>, and <code>in_hours()</code>
+convert the axis. <code>result.units</code> and <code>result.descriptions</code>
+provide labels. <code>result.totals</code> calculates molecular totals from the
+reported values: molecules/cell times cell count, or M times volume times
+Avogadro's number. Counts and accumulators retain their own units.</p>
+<p><code>result.at(name, time)</code> returns the last sample at or before that
+time without interpolation. At an impulse time this selects the after-dose
+sample. Inspect the duplicate event indices if you need the before-dose value.</p>
+<p><code>plot_simulations(results, variables=None, time_units=None,
+figsize=(15,10), log_scale=False, overall_title=None, legend_style='shared',
+time_range=None, columns=3, unit_conversions=None)</code> accepts one result or a
+list. Variables may include observables and accumulators. Log-scale options are
+True, False, <code>'logx'</code>, <code>'logy'</code>, or <code>'loglog'</code>.
+<code>time_range</code> uses the requested plotting time unit.
+<code>unit_conversions</code> maps a plotted variable to a
+<code>(factor, units_label)</code> pair: for example,
+<code>unit_conversions={'B': (1e9, 'nM')}</code> plots a molar species
+<code>B</code> in nM. You may also use
+Matplotlib directly. <code>make_plot_look_good(axes)</code> and
+<code>set_axes_labels(axes, x_label, y_label, title, legend_title=None)</code>
+provide optional consistent styling.</p><pre><code>results = []
+for k_loss in [0.005, 0.01, 0.02]:
+    variant_parameters = parameters.with_changes(k_loss=k_loss)
+    variant_model = network.compile(variant_parameters, time_units=&#x27;min&#x27;)
+    results.append(Simulation(
+        f&#x27;k_loss={k_loss:g}&#x27;, time_axis, variant_model, initial_values,
+        impulses=events,
+    ).simulate())</code></pre><p>Keep initial conditions and dosing consistent when comparing parameter
+effects. If a parameter changes the untreated receptor state, recompute that
+state for the variant before treatment. For design-project variants, use
+<code>build_model(network, variant_parameters, time_units='min')</code>.</p></section><section id="troubleshooting"><h2>10 Common problems and advanced interfaces</h2><table><thead><tr><th>Symptom</th><th>What to inspect</th></tr></thead><tbody><tr><td>Missing compartment or count error</td><td>Adding a counted compartment creates its count state. Compartments with per-cell molecular species need positive initial counts; count-only populations may start at zero.</td></tr><tr><td>Unit mismatch when building a model</td><td>Seconds versus minutes; per-cell versus molar association constants; the units returned by a custom rate.</td></tr><tr><td>Killing is always saturated or absent</td><td>Convert molecules/cell to intracellular M before comparing with a molar potency parameter.</td></tr><tr><td>A dose is too large by a volume factor</td><td>Distinguish amount in mol from concentration in M. Use the correct destination volume.</td></tr><tr><td>Doses disappear or seem to reset blood concentration</td><td>Pass all additive impulses to one simulation. Do not restart each cycle with zero drug unless that is the intended model.</td></tr><tr><td>Spurious per-cell loss with death</td><td>Cell-loss reactions leave per-cell amounts unchanged; do not also add death sinks for every per-cell pool.</td></tr><tr><td>Cell division changes per-cell amounts unexpectedly</td><td>For the project, use build_model and its required exponential-growth reaction.</td></tr><tr><td>Negative counts or strange concentrations near extinction</td><td>Inspect solver tolerances, model validity at tiny counts, and the chosen time window.</td></tr><tr><td>Plot misses an early peak</td><td>Use denser output near dose events; adaptive internal steps do not guarantee a densely sampled plotted peak.</td></tr></tbody></table><p>For hand-written ODEs, <code>HandWrittenModel(derivative_function, species,
+time_units='min')</code> accepts a function <code>dydt(t, state_dict)</code> returning
+a derivative dictionary, and an ordered list of state names. It has no automatic
+unit or compartment bookkeeping, observables, or accumulators. Impulses use
+<code>units='raw'</code>. In this interface, implement the intended no-dilution
+equations directly; the project adapter is for reaction-network models.</p>
+<p>Declaration objects <code>ChemicalSpecies</code>, <code>PopulationCount</code>, <code>Parameter</code>,
+<code>DirectTerm</code>, <code>Observable</code>, and <code>Accumulator</code>
+are normally created by the corresponding add methods. <code>CompiledModel</code>,
+<code>RateEquation</code>, <code>RateTerm</code>, and <code>Moiety</code> support
+inspection and extension; most assignments do not require constructing them directly.</p>
+<p>Use Python <code>help(...)</code> for exact signatures and docstrings. This guide
+matches modelingTools 0.1.0a10. Its examples use illustrative values and establish
+software behavior, not fitted biological parameters.</p></section><section class="assignment-section" aria-labelledby="snapshots">
+      <h2 id="snapshots">Assignment snapshots</h2>
+      <p class="staff-note">For instructors maintaining assignments.</p>
+      <p>Each assignment keeps a complete copy of this package beside its authored
+      notebooks, including this HTML guide and its PDF. Its build ships that local
+      copy in <tt>Files/modelingTools/</tt>, so the released assignment does not depend
+      on the repository or an installed modeling library.</p>
+      <p class="command-intro">From the repository root, pin a new assignment:</p>
+      <pre>python -m psetTools.snapshot_modeling_tools PSET_4</pre>
+      <p class="command-intro">To deliberately update an existing assignment's version:</p>
+      <pre>python -m psetTools.snapshot_modeling_tools PSET_4 --refresh
+python -m psetTools.snapshot_modeling_tools "Design Project/2026 20.320 project" --refresh</pre>
+      <p>The command regenerates the PDF from <tt>documentation.html</tt>, copies
+      the package, and writes <tt>SNAPSHOT.json</tt> with its version and file hashes.
+      Assignment builds verify their local snapshot and never refresh it
+      automatically. An edited or incomplete snapshot fails validation. Its files
+      are recorded in the build manifest, so refreshing one assignment triggers a
+      rebuild of that assignment.</p>
+      <p>Edit this maintained source, increment <tt>__version__</tt> when its behavior
+      or interface changes, and explicitly refresh only the assignments that should
+      receive that change. Leave older snapshots in place to reproduce older assignments.</p>
+
+      <h3 id="documentation-source">Updating this guide</h3>
+      <p class="command-intro">Edit <tt>modelingTools/documentation.html</tt>. Its styles are included in
+      the file, and it works offline. To regenerate just the PDF:</p>
+      <pre>python -m psetTools.build_modeling_docs</pre>
+
+      <h3 id="tests">Shared tests</h3>
+      <p class="command-intro">Shared tests live outside the runtime package. Run them from the repository root:</p>
+      <pre>/opt/anaconda3/envs/Course20320Instructor/bin/python \
+  -m unittest discover -s tests/modelingTools -v</pre>
+    </section>
+
+    <section aria-labelledby="versions">
+      <h2 id="versions">Version history</h2>
+      <p><span class="version">0.1.0a1.</span> Packaged the unchanged modeling
+      implementation from the <tt>design-project-2026-alpha</tt> tag.
+      <tt>PROVENANCE.json</tt> records that original module's commit and checksum.</p>
+      <p><span class="version">0.1.0a2.</span> Removes the numerical balance checker
+      and its <tt>BalanceWarning</tt>. Simulations retain model validation and explicit
+      solver-failure reporting. Stoichiometry, molecular-balance descriptions, and
+      equation displays remain available.</p>
+      <p><span class="version">0.1.0a3.</span> Allows regimens with no doses in the
+      simulated period, scalar constant observables, and models with no reactions or
+      direct rate terms. Accepts dimensionless units written as <tt>"1"</tt> and
+      integer-valued stoichiometric coefficients such as <tt>2.0</tt> in dictionaries
+      and reaction strings.</p>
+      <p><span class="version">0.1.0a4.</span> Names the top-level model declaration
+      object <tt>KineticModel</tt>. It combines compartments, species, reactions,
+      direct rate terms, observables, and accumulators; <tt>compile()</tt> produces
+      a <tt>CompiledModel</tt> for simulation.</p>
+      <p><span class="version">0.1.0a5.</span> Uses <tt>Impulse</tt> for an instantaneous
+      state addition, <tt>Simulation(..., impulses=...)</tt> for its inputs, and
+      <tt>result.impulse_times</tt> for the event times. The scheduling helpers and
+      model interface use the same terminology. These names replace the previous
+      dose-based API.</p>
+    </section>
+</main></body></html>
