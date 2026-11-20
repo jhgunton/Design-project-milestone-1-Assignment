@@ -9,7 +9,7 @@ from pset_check import check_answer
 
 # --- Setup Cell 3 ---
 # Enter the email address associated with your Gradescope account.
-my_email = "your_email@mit.edu"
+my_email = "jhgunton@mit.edu"
 
 # --- Setup Cell 7 ---
 import os, sys; sys.path.insert(0, os.path.join(os.path.dirname(globals().get('__vsc_ipynb_file__', '')) or os.getcwd(), 'Files'))
@@ -45,20 +45,188 @@ try:
     # Keep these three names. The automatic answer checks and later parts use them.
     network = KineticModel()
     parameters = Parameters()
+    from modelingTools import convert_rate_constant
     
-    # TODO: add the blood and cell compartments.
-    # network.add_compartment(Compartment(...))
-    # network.add_compartment(Compartment(...))
+    # adding the blood and cell compartments.
+    blood_volume_L = 5.0
+    cell_radius_um = 10.0 / 2.0
+    cell_volume_L = 4.0 / 3.0 * np.pi * cell_radius_um**3 * 1e-15  # find cell volume approximating cell as sphere, then convert um^3 to L
     
-    # TODO: declare the molecular species in the table, one call per species.
-    # network.add_species(...)
+    network.add_compartment(Compartment('blood', volume= blood_volume_L))
+    network.add_compartment(Compartment('cell', count_variable = 'N', count_units='cells', volume_per_unit=cell_volume_L))
     
-    # TODO: add reactions to network, and your parameters to parameters.
+    # declares the molecular species in the table, one call per species.
+    network.add_species('A_b', 'Loaded ADC in blood', 'M', 'blood')
+    network.add_species('P_b', 'Free payload in blood', 'M', 'blood')
+    
+    network.add_species('M_s', 'Surface monomer', '#/cell', 'cell')
+    network.add_species('D_s', 'Surface dimer', '#/cell', 'cell')
+    network.add_species('C_s', 'Surface ADC-monomer complex', '#/cell', 'cell')
+    
+    network.add_species('M_i', 'Internal monomer', '#/cell', 'cell')
+    network.add_species('D_i', 'Internal dimer', '#/cell', 'cell')
+    network.add_species('A_i', 'Internal loaded ADC', '#/cell', 'cell')
+    
+    network.add_species('P_i', 'Endosomal free payload', '#/cell', 'cell')
+    network.add_species('P_c', 'Cytoplasmic free payload', '#/cell', 'cell')
+    
+    # adds reactions to network, and your parameters to parameters.
     # You may add cells if that makes your work easier to organize.
+    minutes_per_day = 24 * 60 # useful conversion so that all rate constants are in written with time units of minutes
     
-    # TODO: when network and parameters are complete, replace None with
-    #       build_model(network, parameters, time_units='min')
-    model = None
+    # HER2 monomer synthesis
+    parameters.add('q_HER2', 1000, '#/cell/min', 'HER2 monomer synthesis')
+    k_on_HER2_per_cell = convert_rate_constant(
+        1e5 * 60, # k_on value in M^-1 s^-1
+        'M^-1 min^-1',
+        '(#/cell)^-1 min^-1',
+        volume=cell_volume_L
+    )
+    network.add_reaction(Reaction(
+        'HER2 monomer synthesis',
+        {},
+        'M_s',
+        forward_rate_constant='q_HER2'
+    ))
+    
+    # 2 M_s <-> D_s
+    parameters.add('k_on_HER2', k_on_HER2_per_cell, '(#/cell)^-1 min^-1', 'HER2 dimer association rate')
+    parameters.add('k_off_HER2', 3e-4 * 60, 'min^-1', 'HER2 dimer dissociation')
+    network.add_reaction(Reaction(
+        'HER2 dimerization',
+        '2 M_s',
+        'D_s',
+        forward_rate_constant='k_on_HER2',
+        reverse_rate_constant='k_off_HER2'
+    ))
+    
+    # M_s + A_b <-> C_s
+    parameters.add('k_on_ADC', 6e5 * 60, 'M^-1 min^-1', 'ADC association to surface monomer')
+    parameters.add('k_off_ADC', 3e-4 * 60, 'min^-1', 'ADC dissociation')
+    network.add_reaction(Reaction(
+        'ADC binding',
+        'A_b + M_s',
+        'C_s',
+        forward_rate_constant='k_on_ADC',
+        reverse_rate_constant='k_off_ADC'
+    ))
+    
+    # Receptor internalization, recycling, and degradation
+    parameters.add('k_er', 0.003, 'min^-1', 'Monomer and ADC-monomer internalization')
+    parameters.add('k_ec', 0.01, 'min^-1', 'Dimer internalization')
+    parameters.add('k_rec', 0.03, 'min^-1', 'HER2 monomer and dimer recycling')
+    parameters.add('k_deg_HER2', 0.003, 'min^-1', 'Endosomal HER2 monomer and dimer degradation')
+    network.add_reaction(Reaction(
+        'Monomer internalization',
+        'M_s',
+        'M_i',
+        forward_rate_constant='k_er'
+    ))
+    network.add_reaction(Reaction(
+        'Dimer internalization',
+        'D_s',
+        'D_i',
+        forward_rate_constant='k_ec'
+    ))
+    network.add_reaction(Reaction(
+        'Monomer recycling',
+        'M_i',
+        'M_s',
+        forward_rate_constant='k_rec'
+    ))
+    network.add_reaction(Reaction(
+        'Dimer recycling',
+        'D_i',
+        'D_s',
+        forward_rate_constant='k_rec'
+    ))
+    network.add_reaction(Reaction(
+        'Internal monomer degradation',
+        'M_i',
+        {},
+        forward_rate_constant='k_deg_HER2'
+    ))
+    
+    network.add_reaction(Reaction(
+        'Internal dimer degradation',
+        'D_i',
+        {},
+        forward_rate_constant='k_deg_HER2'
+    ))
+    
+    # ADC-HER2 (C_s) Internalization
+    network.add_reaction(Reaction(
+        'C_s internalization',
+        'C_s',
+        'M_i + A_i',
+        forward_rate_constant='k_er'
+    ))
+    
+    
+    # Payload release
+    parameters.add('k_rel_i', 0.06, 'min^-1', 'Endosomal payload release')
+    parameters.add('k_rel_b', 6.68e-7, 'min^-1', 'Circulating payload release')
+    network.add_reaction(Reaction(
+        'Endosomal payload release',
+        'A_i',
+        '8 P_i',
+        forward_rate_constant='k_rel_i'
+    ))
+    network.add_reaction(Reaction(
+        'Circulating payload release',
+        'A_b',
+        '8 P_b',
+        forward_rate_constant='k_rel_b'
+    ))
+    
+    # Background intact-ADC clearance
+    parameters.add('k_clear_ADC', np.log(2) / (5.7 * minutes_per_day), 'min^-1', 'Background loaded-ADC clearance') # from t_1/2 = ln(2)/k_clear_ADC_unmod, where NumPy's ln function is np.log
+    network.add_reaction(Reaction(
+        'Loaded ADC clearance',
+        'A_b',
+        {},
+        forward_rate_constant='k_clear_ADC'
+    ))
+    
+    # Payload escape, degradation, and clearance
+    parameters.add('k_esc', 0.03, 'min^-1', 'Endosomal payload escape')
+    parameters.add('k_deg_P', 0.003, 'min^-1', 'Payload degradation in endosome and cytoplasm')
+    parameters.add('k_clear', 1 / minutes_per_day, 'min^-1', 'Blood payload clearance')
+    network.add_reaction(Reaction(
+        'Payload escape to cytoplasm',
+        'P_i',
+        'P_c',
+        forward_rate_constant='k_esc'
+    ))
+    network.add_reaction(Reaction(
+        'Endosomal payload degradation',
+        'P_i',
+        {},
+        forward_rate_constant='k_deg_P'
+    ))
+    network.add_reaction(Reaction(
+        'Cytoplasmic payload degradation',
+        'P_c',
+        {},
+        forward_rate_constant='k_deg_P'
+    ))
+    network.add_reaction(Reaction(
+        'Blood payload clearance',
+        'P_b',
+        {},
+        forward_rate_constant='k_clear'
+    ))
+    
+    # Cell growth
+    parameters.add('mu', np.log(2) / (14 * minutes_per_day), 'min^-1', 'Cell growth') # same conversion as for k_clear_ADC, from t_d = ln(2)/mu_unmod
+    network.add_reaction(Reaction(
+        'Cell growth',
+        'N',
+        '2 N',
+        forward_rate_constant='mu'
+    ))
+    
+    model = build_model(network, parameters, time_units='min')
 
     check_answer("2.1");
 
@@ -69,20 +237,23 @@ except Exception as _err_2_1:
 # Question: 2.2 (5 points)
 # ============================================================
 try:
+    # Killing parameters
+    parameters.add('delta_max', 0.15 / minutes_per_day, 'min^-1', 'Maximum cancer-cell killing rate')
+    parameters.add('K_P', 10e-6, 'M', 'Cytoplasmic payload concentration for half-maximal killing')
     def killing_rate_constant(s, k):
-        # TODO: return the Monod killing rate constant (delta in the printed equations),
+        # returns the Monod killing rate constant (delta in the printed equations),
         #       in min^-1, from the cytoplasmic payload concentration.
-        return 0.0
+        P_c_M = s.molar('P_c') # convert cytoplasmic payload concentration from #/cell to moles/L
+        return (k.delta_max * P_c_M) / (k.K_P + P_c_M)
     
-    # TODO: uncomment once killing_rate_constant is complete.
-    # network.add_reaction(Reaction(
-    #     'Cell killing', 'N', {},
-    #     rate_function=lambda s, k: killing_rate_constant(s, k) * s.N,
-    #     rate_expression='delta × [N]', rate_expression_latex=r'\delta \, [N]',
-    #     rate_units='cells/min',
-    # ))
-    # model = build_model(network, parameters, time_units='min')
-    # model.print_rate_equations()
+    network.add_reaction(Reaction(
+        'Cell killing', 'N', {},
+        rate_function=lambda s, k: killing_rate_constant(s, k) * s.N,
+        rate_expression='delta × [N]', rate_expression_latex=r'\delta \, [N]',
+        rate_units='cells/min',
+    ))
+    model = build_model(network, parameters, time_units='min')
+    model.print_rate_equations()
 
     check_answer("2.2");
 
@@ -93,6 +264,10 @@ except Exception as _err_2_2:
 # Question: 2.3 (5 points)
 # ============================================================
 try:
+    # adds an accumulator named AUC_P_b that integrates [P_b], then call build_model again.
+    network.add_accumulator('AUC_P_b', lambda s, k: s.P_b, 'M min', 'Area under the curve of blood payload concentration over time')
+    model = build_model(network, parameters, time_units='min')
+
     check_answer("2.3");
 
 except Exception as _err_2_3:
